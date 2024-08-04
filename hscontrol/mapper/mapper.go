@@ -94,7 +94,6 @@ func (m *Mapper) String() string {
 func generateUserProfiles(
 	node *types.Node,
 	peers types.Nodes,
-	baseDomain string,
 ) []tailcfg.UserProfile {
 	userMap := make(map[string]types.User)
 	userMap[node.User.Name] = node.User
@@ -104,18 +103,8 @@ func generateUserProfiles(
 
 	var profiles []tailcfg.UserProfile
 	for _, user := range userMap {
-		displayName := user.Name
-
-		if baseDomain != "" {
-			displayName = fmt.Sprintf("%s@%s", user.Name, baseDomain)
-		}
-
 		profiles = append(profiles,
-			tailcfg.UserProfile{
-				ID:          tailcfg.UserID(user.ID),
-				LoginName:   user.Name,
-				DisplayName: displayName,
-			})
+			user.TailscaleUserProfile())
 	}
 
 	return profiles
@@ -552,7 +541,6 @@ func appendPeerChanges(
 	changed types.Nodes,
 	cfg *types.Config,
 ) error {
-
 	packetFilter, err := pol.CompileFilterRules(append(peers, node))
 	if err != nil {
 		return err
@@ -569,7 +557,7 @@ func appendPeerChanges(
 		changed = policy.FilterNodesByACL(node, changed, packetFilter)
 	}
 
-	profiles := generateUserProfiles(node, changed, cfg.BaseDomain)
+	profiles := generateUserProfiles(node, changed)
 
 	dnsConfig := generateDNSConfig(
 		cfg,
@@ -594,9 +582,30 @@ func appendPeerChanges(
 		resp.PeersChanged = tailPeers
 	}
 	resp.DNSConfig = dnsConfig
-	resp.PacketFilter = policy.ReduceFilterRules(node, packetFilter)
 	resp.UserProfiles = profiles
 	resp.SSHPolicy = sshPolicy
+
+	// 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
+	if capVer >= 81 {
+		// Currently, we do not send incremental package filters, however using the
+		// new PacketFilters field and "base" allows us to send a full update when we
+		// have to send an empty list, avoiding the hack in the else block.
+		resp.PacketFilters = map[string][]tailcfg.FilterRule{
+			"base": policy.ReduceFilterRules(node, packetFilter),
+		}
+	} else {
+		// This is a hack to avoid sending an empty list of packet filters.
+		// Since tailcfg.PacketFilter has omitempty, any empty PacketFilter will
+		// be omitted, causing the client to consider it unchange, keeping the
+		// previous packet filter. Worst case, this can cause a node that previously
+		// has access to a node to _not_ loose access if an empty (allow none) is sent.
+		reduced := policy.ReduceFilterRules(node, packetFilter)
+		if len(reduced) > 0 {
+			resp.PacketFilter = reduced
+		} else {
+			resp.PacketFilter = packetFilter
+		}
+	}
 
 	return nil
 }

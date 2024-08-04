@@ -119,7 +119,7 @@ type Node struct {
 	ForcedTags StringList
 
 	// TODO(kradalby): This seems like irrelevant information?
-	AuthKeyID *uint       `sql:"DEFAULT:NULL"`
+	AuthKeyID *uint64     `sql:"DEFAULT:NULL"`
 	AuthKey   *PreAuthKey `gorm:"constraint:OnDelete:SET NULL;"`
 
 	LastSeen *time.Time
@@ -373,8 +373,7 @@ func (node *Node) Proto() *v1.Node {
 		User:        node.User.Proto(),
 		ForcedTags:  node.ForcedTags,
 
-		// TODO(kradalby): Implement register method enum converter
-		// RegisterMethod: ,
+		RegisterMethod: node.RegisterMethodToV1Enum(),
 
 		CreatedAt: timestamppb.New(node.CreatedAt),
 	}
@@ -487,6 +486,19 @@ func (node *Node) PeerChangeFromMapRequest(req tailcfg.MapRequest) tailcfg.PeerC
 	ret.LastSeen = &now
 
 	return ret
+}
+
+func (node *Node) RegisterMethodToV1Enum() v1.RegisterMethod {
+	switch node.RegisterMethod {
+	case "authkey":
+		return v1.RegisterMethod_REGISTER_METHOD_AUTH_KEY
+	case "oidc":
+		return v1.RegisterMethod_REGISTER_METHOD_OIDC
+	case "cli":
+		return v1.RegisterMethod_REGISTER_METHOD_CLI
+	default:
+		return v1.RegisterMethod_REGISTER_METHOD_UNSPECIFIED
+	}
 }
 
 // ApplyPeerChange takes a PeerChange struct and updates the node.
